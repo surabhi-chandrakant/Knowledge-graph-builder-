@@ -30,13 +30,7 @@ Users can add multiple articles over time, explore the growing graph visually, a
 
 ## Live Demo / Deployment
 
-No server needed. Three ways to run it:
-
-| Method | Steps | Result |
-|---|---|---|
-| **Local** | Unzip → open `index.html` in browser | Works immediately |
-| **Netlify Drop** | Go to [app.netlify.com/drop](https://app.netlify.com/drop) → drag unzipped folder | Live URL in 30 seconds |
-| **GitHub Pages** | Push files to repo → Settings → Pages → Deploy from branch | `yourusername.github.io/repo-name` |
+https://knowledge-graph-builder-liard.vercel.app/ 
 
 ---
 
