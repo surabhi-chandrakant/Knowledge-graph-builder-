@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Knowledge Graph Explorer</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div class="brand">
+      <span class="brand-icon">⬡</span>
+      <span class="brand-text">KnowledgeGraph</span>
+    </div>
+
+    <!-- API Key Section -->
+    <div class="sidebar-section">
+      <div class="section-label">API Configuration</div>
+      <div class="api-toggle">
+        <button class="api-btn active" id="btn-groq" onclick="selectAPI('groq')">Groq (Free)</button>
+        <button class="api-btn" id="btn-gemini" onclick="selectAPI('gemini')">Gemini (Free)</button>
+      </div>
+      <input type="password" id="api-key-input" placeholder="Paste your API key here…" />
+      <div class="api-hint" id="api-hint">
+        Get free key: <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>
+      </div>
+    </div>
+
+    <!-- Add Article -->
+    <div class="sidebar-section">
+      <div class="section-label">Add Articles</div>
+      <textarea id="article-input" placeholder="Paste article text here…&#10;&#10;e.g. 'Albert Einstein was a physicist who developed the theory of relativity. He was born in Germany and later moved to the United States…'"></textarea>
+      <button class="btn-primary" onclick="addArticle()">
+        <span id="add-btn-text">⬡ Extract & Add to Graph</span>
+        <span id="add-btn-spinner" class="spinner hidden"></span>
+      </button>
+    </div>
+
+    <!-- Sample articles -->
+    <div class="sidebar-section">
+      <div class="section-label">Quick Load</div>
+      <div class="sample-pills">
+        <button class="pill" onclick="loadSample('science')">🔬 Science</button>
+        <button class="pill" onclick="loadSample('history')">📜 History</button>
+        <button class="pill" onclick="loadSample('tech')">💻 Tech</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="sidebar-section stats-section">
+      <div class="stat-row">
+        <span class="stat-label">Entities</span>
+        <span class="stat-val" id="stat-entities">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Relations</span>
+        <span class="stat-val" id="stat-relations">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Articles</span>
+        <span class="stat-val" id="stat-articles">0</span>
+      </div>
+    </div>
+
+    <button class="btn-danger" onclick="clearGraph()">✕ Clear Graph</button>
+  </aside>
+
+  <!-- MAIN -->
+  <main id="main">
+
+    <!-- Top Bar -->
+    <div id="topbar">
+      <div class="query-wrap">
+        <span class="query-icon">⌕</span>
+        <input type="text" id="query-input" placeholder="Ask anything about the graph… e.g. 'Who invented the telephone?'" />
+        <button id="query-btn" onclick="queryGraph()">Ask</button>
+      </div>
+    </div>
+
+    <!-- Answer Panel -->
+    <div id="answer-panel" class="hidden">
+      <div id="answer-header">
+        <span id="answer-icon">◈</span>
+        <span id="answer-title">Answer</span>
+        <button onclick="closeAnswer()">✕</button>
+      </div>
+      <div id="answer-body"></div>
+    </div>
+
+    <!-- Graph Canvas -->
+    <div id="graph-wrap">
+      <svg id="graph-svg"></svg>
+
+      <!-- Empty state -->
+      <div id="empty-state">
+        <div class="empty-icon">⬡</div>
+        <div class="empty-title">Your Knowledge Graph is empty</div>
+        <div class="empty-sub">Add articles using the sidebar to build your graph.<br/>Entities and relationships will appear here.</div>
+      </div>
+
+      <!-- Controls -->
+      <div id="graph-controls">
+        <button onclick="zoomIn()" title="Zoom in">＋</button>
+        <button onclick="zoomOut()" title="Zoom out">－</button>
+        <button onclick="resetZoom()" title="Fit to screen">⊡</button>
+      </div>
+
+      <!-- Legend -->
+      <div id="legend">
+        <div class="legend-item"><span class="legend-dot" style="background:#6C8EBF"></span>Person</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#82B366"></span>Place</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#D6A832"></span>Organization</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#AE85C9"></span>Concept</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#E06565"></span>Event</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#5FB8C4"></span>Other</div>
+      </div>
+    </div>
+
+    <!-- Node Detail Panel -->
+    <div id="node-panel" class="hidden">
+      <div id="node-panel-header">
+        <div id="node-panel-type"></div>
+        <div id="node-panel-name"></div>
+        <button onclick="closeNodePanel()">✕</button>
+      </div>
+      <div id="node-panel-body">
+        <div class="np-section-label">Connected to</div>
+        <div id="node-connections"></div>
+        <div class="np-section-label" style="margin-top:12px">Source</div>
+        <div id="node-source"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
