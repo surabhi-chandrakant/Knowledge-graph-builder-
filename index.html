@@ -3,145 +3,146 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Knowledge Graph Explorer</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>Knowledge Graph Builder</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-<div id="app">
-
-  <!-- SIDEBAR -->
-  <aside id="sidebar">
-    <div class="brand">
-      <span class="brand-icon">⬡</span>
-      <span class="brand-text">KnowledgeGraph</span>
+  <!-- HEADER -->
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⬡</span>
+        <span class="logo-text">KnowledgeGraph</span>
+      </div>
+      <div class="header-meta">Build · Connect · Query</div>
     </div>
+  </header>
 
-    <!-- API Key Section -->
-    <div class="sidebar-section">
-      <div class="section-label">API Configuration</div>
-      <div class="api-toggle">
-        <button class="api-btn active" id="btn-groq" onclick="selectAPI('groq')">Groq (Free)</button>
-        <button class="api-btn" id="btn-gemini" onclick="selectAPI('gemini')">Gemini (Free)</button>
-      </div>
-      <input type="password" id="api-key-input" placeholder="Paste your API key here…" />
-      <div class="api-hint" id="api-hint">
-        Get free key: <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>
-      </div>
-    </div>
+  <!-- MAIN LAYOUT -->
+  <main>
 
-    <!-- Add Article -->
-    <div class="sidebar-section">
-      <div class="section-label">Add Articles</div>
-      <textarea id="article-input" placeholder="Paste article text here…&#10;&#10;e.g. 'Albert Einstein was a physicist who developed the theory of relativity. He was born in Germany and later moved to the United States…'"></textarea>
-      <button class="btn-primary" onclick="addArticle()">
-        <span id="add-btn-text">⬡ Extract & Add to Graph</span>
-        <span id="add-btn-spinner" class="spinner hidden"></span>
-      </button>
-    </div>
-
-    <!-- Sample articles -->
-    <div class="sidebar-section">
-      <div class="section-label">Quick Load</div>
-      <div class="sample-pills">
-        <button class="pill" onclick="loadSample('science')">🔬 Science</button>
-        <button class="pill" onclick="loadSample('history')">📜 History</button>
-        <button class="pill" onclick="loadSample('tech')">💻 Tech</button>
-      </div>
-    </div>
-
-    <!-- Stats -->
-    <div class="sidebar-section stats-section">
-      <div class="stat-row">
-        <span class="stat-label">Entities</span>
-        <span class="stat-val" id="stat-entities">0</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Relations</span>
-        <span class="stat-val" id="stat-relations">0</span>
-      </div>
-      <div class="stat-row">
-        <span class="stat-label">Articles</span>
-        <span class="stat-val" id="stat-articles">0</span>
-      </div>
-    </div>
-
-    <button class="btn-danger" onclick="clearGraph()">✕ Clear Graph</button>
-  </aside>
-
-  <!-- MAIN -->
-  <main id="main">
-
-    <!-- Top Bar -->
-    <div id="topbar">
-      <div class="query-wrap">
-        <span class="query-icon">⌕</span>
-        <input type="text" id="query-input" placeholder="Ask anything about the graph… e.g. 'Who invented the telephone?'" />
-        <button id="query-btn" onclick="queryGraph()">Ask</button>
-      </div>
-    </div>
-
-    <!-- Answer Panel -->
-    <div id="answer-panel" class="hidden">
-      <div id="answer-header">
-        <span id="answer-icon">◈</span>
-        <span id="answer-title">Answer</span>
-        <button onclick="closeAnswer()">✕</button>
-      </div>
-      <div id="answer-body"></div>
-    </div>
-
-    <!-- Graph Canvas -->
-    <div id="graph-wrap">
-      <svg id="graph-svg"></svg>
-
-      <!-- Empty state -->
-      <div id="empty-state">
-        <div class="empty-icon">⬡</div>
-        <div class="empty-title">Your Knowledge Graph is empty</div>
-        <div class="empty-sub">Add articles using the sidebar to build your graph.<br/>Entities and relationships will appear here.</div>
+    <!-- LEFT PANEL: Input + Articles -->
+    <aside class="panel-left" id="leftPanel">
+      <div class="panel-section">
+        <div class="section-label">API KEY</div>
+        <div class="input-row">
+          <input type="password" id="apiKeyInput" placeholder="sk-ant-..." />
+          <button class="btn-save" id="saveKeyBtn" onclick="saveApiKey()">Save</button>
+        </div>
+        <div class="key-status" id="keyStatus"></div>
       </div>
 
-      <!-- Controls -->
-      <div id="graph-controls">
-        <button onclick="zoomIn()" title="Zoom in">＋</button>
-        <button onclick="zoomOut()" title="Zoom out">－</button>
-        <button onclick="resetZoom()" title="Fit to screen">⊡</button>
+      <div class="panel-section">
+        <div class="section-label">ADD ARTICLE</div>
+        <input type="text" id="articleTitle" placeholder="Article title (optional)" />
+        <textarea id="articleText" placeholder="Paste article text here… (min 50 chars)" rows="7"></textarea>
+        <button class="btn-primary" id="addBtn" onclick="addArticle()">
+          <span id="addBtnText">Extract & Add to Graph</span>
+          <span class="spinner hidden" id="addSpinner"></span>
+        </button>
       </div>
+
+      <div class="panel-section">
+        <div class="section-label">ARTICLES <span id="articleCount" class="count-badge">0</span></div>
+        <div id="articleList" class="article-list">
+          <div class="empty-state">No articles yet. Add one above.</div>
+        </div>
+      </div>
+
+      <div class="panel-section danger-zone">
+        <button class="btn-danger" onclick="clearAll()">Clear Everything</button>
+      </div>
+    </aside>
+
+    <!-- CENTER: Graph -->
+    <section class="panel-center" id="graphPanel">
+      <div class="graph-toolbar">
+        <span class="toolbar-label">KNOWLEDGE GRAPH</span>
+        <div class="toolbar-right">
+          <span class="node-count" id="nodeCount">0 nodes · 0 edges</span>
+          <button class="btn-icon" title="Zoom to fit — scales the graph so all nodes are visible" onclick="zoomToFit()">⊞ Fit</button>
+          <button class="btn-icon" title="Reset zoom — returns to default zoom level and position" onclick="resetZoom()">↺ Reset</button>
+        </div>
+      </div>
+      <div id="graphContainer">
+        <div class="graph-empty" id="graphEmpty">
+          <div class="graph-empty-icon">⬡</div>
+          <div class="graph-empty-text">Graph will appear here after you add articles</div>
+        </div>
+        <svg id="graphSvg"></svg>
+      </div>
+
+      <!-- Tooltip -->
+      <div class="node-tooltip hidden" id="nodeTooltip"></div>
 
       <!-- Legend -->
-      <div id="legend">
-        <div class="legend-item"><span class="legend-dot" style="background:#6C8EBF"></span>Person</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#82B366"></span>Place</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#D6A832"></span>Organization</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#AE85C9"></span>Concept</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#E06565"></span>Event</div>
-        <div class="legend-item"><span class="legend-dot" style="background:#5FB8C4"></span>Other</div>
+      <div class="legend" id="legend">
+        <div class="legend-title">NODE TYPES</div>
+        <div class="legend-items" id="legendItems"></div>
       </div>
-    </div>
+    </section>
 
-    <!-- Node Detail Panel -->
-    <div id="node-panel" class="hidden">
-      <div id="node-panel-header">
-        <div id="node-panel-type"></div>
-        <div id="node-panel-name"></div>
-        <button onclick="closeNodePanel()">✕</button>
+    <!-- RIGHT PANEL: Query -->
+    <aside class="panel-right" id="rightPanel">
+      <div class="panel-section">
+        <div class="section-label">QUERY GRAPH</div>
+        <div class="query-box">
+          <textarea id="queryInput" placeholder="Ask about the graph… e.g. 'What is related to climate change?' or 'List all organizations'" rows="3"></textarea>
+          <button class="btn-primary" id="queryBtn" onclick="queryGraph()">
+            <span id="queryBtnText">Ask</span>
+            <span class="spinner hidden" id="querySpinner"></span>
+          </button>
+        </div>
+        <div class="quick-queries">
+          <div class="section-sublabel">Quick queries</div>
+          <button class="btn-chip" onclick="setQuery('List all entities and their types')">All entities</button>
+          <button class="btn-chip" onclick="setQuery('What are the most connected nodes?')">Most connected</button>
+          <button class="btn-chip" onclick="setQuery('What relationships exist between people and organizations?')">People → Orgs</button>
+          <button class="btn-chip" onclick="setQuery('Summarize the key themes in the graph')">Key themes</button>
+        </div>
       </div>
-      <div id="node-panel-body">
-        <div class="np-section-label">Connected to</div>
-        <div id="node-connections"></div>
-        <div class="np-section-label" style="margin-top:12px">Source</div>
-        <div id="node-source"></div>
+
+      <div class="panel-section">
+        <div class="section-label">ANSWERS</div>
+        <div id="queryResults" class="query-results">
+          <div class="empty-state">Query results will appear here.</div>
+        </div>
       </div>
-    </div>
+
+      <div class="panel-section">
+        <div class="section-label">GRAPH DATA</div>
+        <div class="stats-grid" id="statsGrid">
+          <div class="stat-box"><div class="stat-val" id="statNodes">0</div><div class="stat-lbl">Nodes</div></div>
+          <div class="stat-box"><div class="stat-val" id="statEdges">0</div><div class="stat-lbl">Edges</div></div>
+          <div class="stat-box"><div class="stat-val" id="statArticles">0</div><div class="stat-lbl">Articles</div></div>
+          <div class="stat-box"><div class="stat-val" id="statTypes">0</div><div class="stat-lbl">Types</div></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="section-label">ENTITY FILTER</div>
+        <div id="filterChips" class="filter-chips">
+          <div class="empty-state small">Add articles to see entity types.</div>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="panel-section">
+        <div class="section-label">EXPORT</div>
+        <div class="export-row">
+          <button class="btn-secondary" onclick="exportJSON()">Export JSON</button>
+          <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
+        </div>
+      </div>
+    </aside>
 
   </main>
-</div>
 
-<!-- Toast -->
-<div id="toast"></div>
+  <!-- NOTIFICATION -->
+  <div class="notification hidden" id="notification"></div>
 
-<script src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -1,489 +1,797 @@
-// ─── State ────────────────────────────────────────────────────────────────────
-const state = {
-  apiProvider: 'groq',
-  nodes: [],       // { id, label, type, source }
-  edges: [],       // { source, target, relation }
-  articles: [],
+// ═══════════════════════════════════════════════
+//  KNOWLEDGE GRAPH BUILDER  –  app.js
+// ═══════════════════════════════════════════════
+
+// ── STATE ──────────────────────────────────────
+const STATE = {
+  apiKey: '',
+  articles: [],          // { id, title, text, nodeIds, edgeIds }
+  graph: {
+    nodes: [],           // { id, label, type, articles:[], connections:0 }
+    edges: [],           // { id, source, target, label, article }
+  },
+  activeFilters: new Set(),   // entity types to SHOW (empty = show all)
+  simulation: null,
+  svg: null,
+  zoom: null,
+  g: null,               // main group inside svg
 };
 
-const TYPE_COLORS = {
-  Person:       '#6C8EBF',
-  Place:        '#82B366',
-  Organization: '#D6A832',
-  Concept:      '#AE85C9',
-  Event:        '#E06565',
-  Other:        '#5FB8C4',
+const NODE_COLORS = {
+  person:       'var(--c-person)',
+  organization: 'var(--c-organization)',
+  location:     'var(--c-location)',
+  concept:      'var(--c-concept)',
+  event:        'var(--c-event)',
+  technology:   'var(--c-technology)',
+  product:      'var(--c-product)',
+  other:        'var(--c-other)',
+};
+const NODE_COLORS_HEX = {
+  person:       '#4f8ef7',
+  organization: '#3ecf8e',
+  location:     '#f7c948',
+  concept:      '#a78bfa',
+  event:        '#fb923c',
+  technology:   '#22d3ee',
+  product:      '#f472b6',
+  other:        '#8a92a6',
 };
 
-// ─── Sample Articles ──────────────────────────────────────────────────────────
-const SAMPLES = {
-  science: `Albert Einstein, born in Ulm, Germany in 1879, was a theoretical physicist who developed the theory of relativity. He worked at the Institute for Advanced Study in Princeton, New Jersey. Einstein received the Nobel Prize in Physics in 1921 for his discovery of the law of the photoelectric effect. He collaborated with Niels Bohr on discussions about quantum mechanics. Einstein's equation E=mc² became one of the most famous equations in physics. He fled Nazi Germany in 1933 and became an American citizen in 1940.
+// ── INIT ────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadFromStorage();
+  initGraph();
+  renderAll();
+});
 
-Marie Curie was a physicist and chemist who conducted pioneering research on radioactivity. She was born in Warsaw, Poland and later moved to Paris, France to study at the University of Paris. Curie discovered the elements polonium and radium. She was the first woman to win a Nobel Prize and the only person to win Nobel Prizes in two different sciences — Physics in 1903 and Chemistry in 1911. She worked at the Radium Institute in Paris.`,
-
-  history: `The Renaissance was a cultural and intellectual movement that began in Florence, Italy during the 14th century. Leonardo da Vinci was a polymath of the Italian Renaissance who worked in Florence and Milan. He was apprenticed to Andrea del Verrocchio and later became a master painter, sculptor, architect, and scientist. Leonardo painted the Mona Lisa and The Last Supper. He worked under the patronage of Ludovico Sforza, the Duke of Milan.
-
-Michelangelo Buonarroti was another great artist of the Renaissance. He was born in Caprese, Tuscany and worked primarily in Florence and Rome. Pope Julius II commissioned Michelangelo to paint the Sistine Chapel ceiling. Michelangelo also sculpted the famous statue of David, which is housed in the Galleria dell'Accademia in Florence. Both Leonardo and Michelangelo were influenced by the Medici family, who were powerful patrons of the arts in Florence.`,
-
-  tech: `Tim Berners-Lee invented the World Wide Web in 1989 while working at CERN, the European Organization for Nuclear Research in Geneva, Switzerland. He proposed an information management system that became the foundation of the web. Berners-Lee founded the World Wide Web Consortium (W3C) at MIT to develop web standards. He was knighted by Queen Elizabeth II in 2004.
-
-Linus Torvalds created the Linux kernel in 1991 while studying at the University of Helsinki in Finland. Linux is an open-source operating system kernel that powers millions of servers worldwide. Torvalds also created Git, a distributed version control system, in 2005. The Linux Foundation, based in San Francisco, supports the development of Linux. Many major technology companies including Google, IBM, and Red Hat contribute to Linux development. Android, developed by Google, is built on the Linux kernel.`,
-};
-
-// ─── API Calls ────────────────────────────────────────────────────────────────
-async function callGroq(prompt) {
-  const key = document.getElementById('api-key-input').value.trim();
-  if (!key) throw new Error('Please enter your Groq API key.');
-
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${key}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 2000,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Groq API error ${res.status}`);
-  }
-
-  const data = await res.json();
-  return data.choices[0].message.content;
-}
-
-async function callGemini(prompt) {
-  const key = document.getElementById('api-key-input').value.trim();
-  if (!key) throw new Error('Please enter your Gemini API key.');
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
-      }),
+// ── STORAGE ─────────────────────────────────────
+function loadFromStorage() {
+  try {
+    const k = localStorage.getItem('kg_apikey');
+    if (k) { STATE.apiKey = k; document.getElementById('apiKeyInput').value = k; showKeyStatus(true); }
+    const d = localStorage.getItem('kg_data');
+    if (d) {
+      const parsed = JSON.parse(d);
+      STATE.articles = parsed.articles || [];
+      STATE.graph    = parsed.graph    || { nodes: [], edges: [] };
     }
-  );
+  } catch(e) { console.warn('Storage load failed', e); }
+}
 
+function saveToStorage() {
+  try {
+    localStorage.setItem('kg_data', JSON.stringify({ articles: STATE.articles, graph: STATE.graph }));
+  } catch(e) { console.warn('Storage save failed', e); }
+}
+
+function saveApiKey() {
+  const val = document.getElementById('apiKeyInput').value.trim();
+  if (!val.startsWith('sk-ant-')) { showNotif('Key must start with sk-ant-', 'error'); return; }
+  STATE.apiKey = val;
+  localStorage.setItem('kg_apikey', val);
+  showKeyStatus(true);
+  showNotif('API key saved', 'success');
+}
+
+function showKeyStatus(ok) {
+  const el = document.getElementById('keyStatus');
+  el.textContent = ok ? '✓ Key saved' : '';
+  el.style.color = ok ? 'var(--green)' : 'var(--red)';
+}
+
+// ── API CALL ────────────────────────────────────
+async function callClaude(messages, systemPrompt = '') {
+  if (!STATE.apiKey) throw new Error('No API key. Add your Anthropic key first.');
+  const body = {
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1000,
+    system: systemPrompt,
+    messages,
+  };
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': STATE.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Gemini API error ${res.status}`);
+    throw new Error(err?.error?.message || `HTTP ${res.status}`);
   }
-
   const data = await res.json();
-  return data.candidates[0].content.parts[0].text;
+  return data.content[0].text;
 }
 
-async function callLLM(prompt) {
-  return state.apiProvider === 'gemini' ? callGemini(prompt) : callGroq(prompt);
-}
-
-// ─── Extract Knowledge Graph from Article ────────────────────────────────────
-async function extractGraph(articleText) {
-  const prompt = `You are a knowledge graph extractor. Given the following article, extract:
-1. Named entities with their types (Person, Place, Organization, Concept, Event, Other)
-2. Relationships between entities
-
-Return ONLY valid JSON in this exact format, no other text:
+// ── EXTRACT GRAPH FROM ARTICLE ──────────────────
+async function extractGraph(title, text) {
+  const system = `You are a knowledge graph extractor. Given an article, extract entities and relationships.
+Return ONLY valid JSON, no markdown, no explanation, exactly this structure:
 {
-  "entities": [
-    {"id": "unique_snake_case_id", "label": "Display Name", "type": "Person|Place|Organization|Concept|Event|Other"}
+  "nodes": [
+    {"id": "unique_snake_case_id", "label": "Display Name", "type": "person|organization|location|concept|event|technology|product|other"}
   ],
-  "relations": [
-    {"source": "source_id", "target": "target_id", "relation": "short verb phrase"}
+  "edges": [
+    {"source": "node_id", "target": "node_id", "label": "relationship verb"}
   ]
 }
-
 Rules:
-- Use snake_case for IDs (e.g., "albert_einstein", "university_of_paris")
-- Types must be exactly one of: Person, Place, Organization, Concept, Event, Other
-- Relations should be short active phrases (e.g., "born in", "founded", "works at", "invented")
-- Extract 5-20 entities and 5-25 relations
-- Avoid duplicate entities - if the same entity appears multiple times, use the same ID
+- node id: lowercase, underscores, no spaces, max 30 chars, must be unique
+- Extract 5-20 nodes per article
+- Extract 5-25 edges per article
+- Types: person, organization, location, concept, event, technology, product, other
+- Edge label: short verb phrase (founded, acquired, located_in, developed, etc.)
+- Only include entities clearly mentioned in the text
+- Merge near-duplicate entities (same entity, different wording) into one node`;
 
-Article:
-${articleText}`;
+  const content = `Article title: ${title || 'Untitled'}\n\n${text.slice(0, 3000)}`;
+  const raw = await callClaude([{ role: 'user', content }], system);
 
-  const raw = await callLLM(prompt);
-
-  // Extract JSON from response (handle markdown code blocks)
-  let json = raw;
-  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (match) json = match[1];
-  else {
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start !== -1 && end !== -1) json = raw.slice(start, end + 1);
-  }
-
-  return JSON.parse(json.trim());
+  // Strip markdown fences if present
+  const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  const parsed = JSON.parse(cleaned);
+  if (!parsed.nodes || !parsed.edges) throw new Error('Invalid extraction response');
+  return parsed;
 }
 
-// ─── Query Graph ─────────────────────────────────────────────────────────────
-async function queryGraph() {
-  const q = document.getElementById('query-input').value.trim();
-  if (!q) return;
-  if (state.nodes.length === 0) { showToast('Add some articles first!', 'warn'); return; }
+// ── INPUT SANITIZATION & VALIDATION ────────────
+function sanitizeInput(raw) {
+  // 1. Strip all HTML/script tags completely
+  let text = raw.replace(/<[^>]*>/g, ' ');
 
-  const btn = document.getElementById('query-btn');
-  btn.textContent = '…';
-  btn.disabled = true;
+  // 2. Decode common HTML entities that survived tag stripping
+  text = text
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#x27;/gi, "'")
+    .replace(/&nbsp;/gi, ' ');
 
-  try {
-    // Build a compact graph summary
-    const nodeList = state.nodes.map(n => `${n.id} (${n.label}, ${n.type})`).join('\n');
-    const edgeList = state.edges.map(e => `${e.source} -[${e.relation}]-> ${e.target}`).join('\n');
+  // 3. Remove null bytes and non-printable control chars (keep newlines/tabs)
+  text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 
-    const prompt = `You are a knowledge graph query engine. Given a knowledge graph and a question, answer the question using ONLY the information present in the graph.
+  // 4. Collapse excessive whitespace but preserve paragraph breaks
+  text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 
-KNOWLEDGE GRAPH NODES:
-${nodeList}
-
-KNOWLEDGE GRAPH EDGES:
-${edgeList}
-
-QUESTION: ${q}
-
-Instructions:
-- Answer the question using only the graph data above
-- Be specific and cite entity names from the graph
-- If the answer cannot be found in the graph, say "This information is not in the knowledge graph"
-- Keep the answer concise (2-4 sentences)
-- Highlight key entities mentioned`;
-
-    const answer = await callLLM(prompt);
-    showAnswer(q, answer);
-  } catch (e) {
-    showToast(e.message, 'error');
-  } finally {
-    btn.textContent = 'Ask';
-    btn.disabled = false;
-  }
+  return text;
 }
 
-// ─── Add Article ──────────────────────────────────────────────────────────────
+function validateArticleInput(title, text) {
+  // Block if stripped text is too short
+  if (text.length < 50) return 'Article text too short (min 50 characters).';
+
+  // Block if > 80% of characters are non-alphanumeric (likely symbols/code dump)
+  const alphanumCount = (text.match(/[a-zA-Z0-9\s]/g) || []).length;
+  const ratio = alphanumCount / text.length;
+  if (ratio < 0.20) return 'Input appears to contain mostly special characters or symbols. Please paste readable article text.';
+
+  // Block if it looks like a script or code block
+  const codePatterns = [
+    /function\s*\(/, /=>\s*{/, /var\s+\w+\s*=/, /const\s+\w+\s*=/, /let\s+\w+\s*=/,
+    /<script[\s>]/i, /javascript:/i, /on\w+\s*=/i, /eval\s*\(/i, /document\./i,
+    /window\./i, /import\s+.*from/, /require\s*\(/,
+  ];
+  for (const pat of codePatterns) {
+    if (pat.test(text)) return 'Input appears to contain code or script. Please paste plain article text only.';
+  }
+
+  // Block if title contains HTML/script
+  if (title && /<[^>]*>/.test(title)) return 'Title contains HTML tags. Please use plain text.';
+
+  return null; // valid
+}
+
+// ── ADD ARTICLE ─────────────────────────────────
 async function addArticle() {
-  const text = document.getElementById('article-input').value.trim();
-  if (!text) { showToast('Please enter some article text', 'warn'); return; }
+  const titleEl = document.getElementById('articleTitle');
+  const textEl  = document.getElementById('articleText');
+  const btn     = document.getElementById('addBtn');
+  const btnText = document.getElementById('addBtnText');
+  const spinner = document.getElementById('addSpinner');
 
-  const btnText = document.getElementById('add-btn-text');
-  const btnSpinner = document.getElementById('add-btn-spinner');
-  const btn = document.querySelector('.btn-primary');
+  const title = sanitizeInput(titleEl.value.trim());
+  const text  = sanitizeInput(textEl.value.trim());
 
-  btnText.textContent = 'Extracting…';
-  btnSpinner.classList.remove('hidden');
+  const validationError = validateArticleInput(title, text);
+  if (validationError) { showNotif(validationError, 'error'); return; }
+  if (!STATE.apiKey)   { showNotif('Save your API key first', 'error'); return; }
+
   btn.disabled = true;
+  btnText.textContent = 'Extracting…';
+  spinner.classList.remove('hidden');
 
   try {
-    const { entities, relations } = await extractGraph(text);
-
-    let newNodes = 0;
-    let newEdges = 0;
-
-    entities.forEach(e => {
-      if (!state.nodes.find(n => n.id === e.id)) {
-        state.nodes.push({ ...e, source: text.slice(0, 100) + '…' });
-        newNodes++;
-      }
-    });
-
-    relations.forEach(r => {
-      const exists = state.edges.find(
-        e => e.source === r.source && e.target === r.target && e.relation === r.relation
-      );
-      if (!exists) {
-        // Only add edge if both nodes exist
-        const srcExists = state.nodes.find(n => n.id === r.source);
-        const tgtExists = state.nodes.find(n => n.id === r.target);
-        if (srcExists && tgtExists) {
-          state.edges.push(r);
-          newEdges++;
-        }
-      }
-    });
-
-    state.articles.push(text.slice(0, 80));
-    document.getElementById('article-input').value = '';
-
-    updateStats();
-    renderGraph();
-    showToast(`Added ${newNodes} entities, ${newEdges} relations`, 'success');
-
-  } catch (e) {
-    showToast('Error: ' + e.message, 'error');
+    const extracted = await extractGraph(title, text);
+    mergeIntoGraph(extracted, title || `Article ${STATE.articles.length + 1}`, text);
+    titleEl.value = '';
+    textEl.value  = '';
+    showNotif(`Added ${extracted.nodes.length} nodes, ${extracted.edges.length} edges`, 'success');
+    saveToStorage();
+    renderAll();
+  } catch(e) {
+    showNotif('Extraction failed: ' + e.message, 'error');
     console.error(e);
   } finally {
-    btnText.textContent = '⬡ Extract & Add to Graph';
-    btnSpinner.classList.add('hidden');
     btn.disabled = false;
+    btnText.textContent = 'Extract & Add to Graph';
+    spinner.classList.add('hidden');
   }
 }
 
-// ─── Load Sample ─────────────────────────────────────────────────────────────
-function loadSample(key) {
-  document.getElementById('article-input').value = SAMPLES[key];
-  showToast('Sample article loaded — click "Extract & Add to Graph"', 'success');
-}
+// ── MERGE EXTRACTED DATA INTO GLOBAL GRAPH ──────
+function mergeIntoGraph(extracted, articleTitle, articleText) {
+  const articleId = 'art_' + Date.now();
+  const addedNodeIds = [];
+  const addedEdgeIds = [];
+  const nodeIdMap = {}; // extracted id → final id
 
-// ─── Stats ───────────────────────────────────────────────────────────────────
-function updateStats() {
-  document.getElementById('stat-entities').textContent = state.nodes.length;
-  document.getElementById('stat-relations').textContent = state.edges.length;
-  document.getElementById('stat-articles').textContent = state.articles.length;
-}
-
-// ─── Clear Graph ─────────────────────────────────────────────────────────────
-function clearGraph() {
-  state.nodes = [];
-  state.edges = [];
-  state.articles = [];
-  updateStats();
-  renderGraph();
-  closeAnswer();
-  closeNodePanel();
-  showToast('Graph cleared', 'warn');
-}
-
-// ─── API Provider ─────────────────────────────────────────────────────────────
-function selectAPI(provider) {
-  state.apiProvider = provider;
-  document.getElementById('btn-groq').classList.toggle('active', provider === 'groq');
-  document.getElementById('btn-gemini').classList.toggle('active', provider === 'gemini');
-
-  const hint = document.getElementById('api-hint');
-  if (provider === 'groq') {
-    hint.innerHTML = 'Get free key: <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a>';
-  } else {
-    hint.innerHTML = 'Get free key: <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com</a>';
-  }
-}
-
-// ─── Answer Panel ─────────────────────────────────────────────────────────────
-function showAnswer(question, answer) {
-  document.getElementById('answer-title').textContent = question;
-  document.getElementById('answer-body').textContent = answer;
-  document.getElementById('answer-panel').classList.remove('hidden');
-}
-
-function closeAnswer() {
-  document.getElementById('answer-panel').classList.add('hidden');
-}
-
-// ─── Node Panel ───────────────────────────────────────────────────────────────
-function showNodePanel(node) {
-  document.getElementById('node-panel-type').textContent = node.type;
-  document.getElementById('node-panel-name').textContent = node.label;
-
-  // Find connections
-  const connections = state.edges
-    .filter(e => e.source === node.id || e.target === node.id)
-    .map(e => {
-      if (e.source === node.id) {
-        const target = state.nodes.find(n => n.id === e.target);
-        return { rel: e.relation, name: target?.label || e.target, dir: 'out' };
-      } else {
-        const src = state.nodes.find(n => n.id === e.source);
-        return { rel: e.relation, name: src?.label || e.source, dir: 'in' };
-      }
-    });
-
-  const connDiv = document.getElementById('node-connections');
-  connDiv.innerHTML = connections.length
-    ? connections.map(c =>
-        `<div class="np-connection">
-          <span class="np-rel">${c.dir === 'out' ? '→' : '←'} ${c.rel}</span>
-          <span class="np-target">${c.name}</span>
-        </div>`
-      ).join('')
-    : '<div style="font-size:12px;color:var(--text3)">No connections</div>';
-
-  document.getElementById('node-source').textContent = node.source || '—';
-  document.getElementById('node-panel').classList.remove('hidden');
-
-  // Highlight connected edges
-  d3.selectAll('.graph-link')
-    .classed('highlighted', d =>
-      d.source.id === node.id || d.target.id === node.id
+  // Merge nodes
+  for (const n of extracted.nodes) {
+    const normLabel = n.label.trim().toLowerCase();
+    const existing  = STATE.graph.nodes.find(
+      x => x.label.trim().toLowerCase() === normLabel && x.type === n.type
     );
+    if (existing) {
+      if (!existing.articles.includes(articleId)) existing.articles.push(articleId);
+      nodeIdMap[n.id] = existing.id;
+    } else {
+      const newNode = {
+        id:       n.id,
+        label:    n.label,
+        type:     n.type || 'other',
+        articles: [articleId],
+        connections: 0,
+        x: undefined, y: undefined,
+      };
+      STATE.graph.nodes.push(newNode);
+      addedNodeIds.push(n.id);
+      nodeIdMap[n.id] = n.id;
+    }
+  }
+
+  // Merge edges
+  for (const e of extracted.edges) {
+    const srcId = nodeIdMap[e.source];
+    const tgtId = nodeIdMap[e.target];
+    if (!srcId || !tgtId) continue;
+    const existing = STATE.graph.edges.find(
+      x => x.source === srcId && x.target === tgtId && x.label === e.label
+    );
+    if (!existing) {
+      const edgeId = `e_${srcId}_${tgtId}_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+      STATE.graph.edges.push({ id: edgeId, source: srcId, target: tgtId, label: e.label, article: articleId });
+      addedEdgeIds.push(edgeId);
+    }
+  }
+
+  // Recompute connection counts
+  STATE.graph.nodes.forEach(n => n.connections = 0);
+  STATE.graph.edges.forEach(e => {
+    const s = STATE.graph.nodes.find(n => n.id === e.source);
+    const t = STATE.graph.nodes.find(n => n.id === e.target);
+    if (s) s.connections++;
+    if (t) t.connections++;
+  });
+
+  STATE.articles.push({
+    id: articleId,
+    title: articleTitle,
+    text: articleText.slice(0, 500),
+    nodeCount: addedNodeIds.length,
+    edgeCount: addedEdgeIds.length,
+  });
 }
 
-function closeNodePanel() {
-  document.getElementById('node-panel').classList.add('hidden');
-  d3.selectAll('.graph-link').classed('highlighted', false);
+// ── DELETE ARTICLE ───────────────────────────────
+function deleteArticle(articleId) {
+  const art = STATE.articles.find(a => a.id === articleId);
+  if (!art) return;
+  STATE.articles = STATE.articles.filter(a => a.id !== articleId);
+
+  // Remove edges linked to this article only
+  STATE.graph.edges = STATE.graph.edges.filter(e => {
+    if (e.article !== articleId) return true;
+    return false;
+  });
+
+  // Remove nodes that only belong to this article
+  STATE.graph.nodes = STATE.graph.nodes.filter(n => {
+    n.articles = n.articles.filter(a => a !== articleId);
+    return n.articles.length > 0;
+  });
+
+  // Recompute connections
+  STATE.graph.nodes.forEach(n => n.connections = 0);
+  STATE.graph.edges.forEach(e => {
+    const s = STATE.graph.nodes.find(n => n.id === e.source);
+    const t = STATE.graph.nodes.find(n => n.id === e.target);
+    if (s) s.connections++;
+    if (t) t.connections++;
+  });
+
+  showNotif('Article removed', 'info');
+  saveToStorage();
+  renderAll();
 }
 
-// ─── D3 Graph ────────────────────────────────────────────────────────────────
-let simulation, svgEl, gEl, zoomBehavior;
+// ── CLEAR ALL ────────────────────────────────────
+function clearAll() {
+  if (!confirm('Clear all articles and the graph? This cannot be undone.')) return;
+  STATE.articles = [];
+  STATE.graph = { nodes: [], edges: [] };
+  STATE.activeFilters.clear();
+  saveToStorage();
+  renderAll();
+  showNotif('Cleared', 'info');
+}
 
-function renderGraph() {
-  const svg = d3.select('#graph-svg');
-  const wrap = document.getElementById('graph-wrap');
-  const W = wrap.clientWidth;
-  const H = wrap.clientHeight;
+// ── RENDER ALL ───────────────────────────────────
+function renderAll() {
+  renderArticleList();
+  updateStats();
+  renderFilterChips();
+  updateLegend();
+  renderGraph();
+}
 
-  // Toggle empty state
-  const empty = document.getElementById('empty-state');
-  if (state.nodes.length === 0) {
-    empty.classList.remove('hidden');
-    svg.selectAll('*').remove();
+function renderArticleList() {
+  const el = document.getElementById('articleList');
+  document.getElementById('articleCount').textContent = STATE.articles.length;
+  if (!STATE.articles.length) {
+    el.innerHTML = '<div class="empty-state">No articles yet. Add one above.</div>';
     return;
   }
-  empty.classList.add('hidden');
+  el.innerHTML = STATE.articles.map(a => `
+    <div class="article-item" id="art-${a.id}">
+      <div class="article-item-dot"></div>
+      <div class="article-item-info">
+        <div class="article-item-title" title="${esc(a.title)}">${esc(a.title)}</div>
+        <div class="article-item-meta">${a.nodeCount} nodes · ${a.edgeCount} edges added</div>
+      </div>
+      <button class="article-item-del" title="Remove article" onclick="deleteArticle('${a.id}')">✕</button>
+    </div>
+  `).join('');
+}
 
-  // Clear
-  svg.selectAll('*').remove();
+function updateStats() {
+  const types = new Set(STATE.graph.nodes.map(n => n.type));
+  document.getElementById('statNodes').textContent    = STATE.graph.nodes.length;
+  document.getElementById('statEdges').textContent    = STATE.graph.edges.length;
+  document.getElementById('statArticles').textContent = STATE.articles.length;
+  document.getElementById('statTypes').textContent    = types.size;
+  document.getElementById('nodeCount').textContent    = `${STATE.graph.nodes.length} nodes · ${STATE.graph.edges.length} edges`;
+}
 
-  // Zoom
-  zoomBehavior = d3.zoom().scaleExtent([0.1, 4]).on('zoom', e => {
-    gEl.attr('transform', e.transform);
+function renderFilterChips() {
+  const el = document.getElementById('filterChips');
+  const types = [...new Set(STATE.graph.nodes.map(n => n.type))].sort();
+  if (!types.length) {
+    el.innerHTML = '<div class="empty-state small">Add articles to see entity types.</div>';
+    return;
+  }
+  el.innerHTML = types.map(t => `
+    <div class="filter-chip ${STATE.activeFilters.size === 0 || STATE.activeFilters.has(t) ? 'active' : ''}"
+         onclick="toggleFilter('${t}')">
+      <div class="filter-chip-dot" style="background:${NODE_COLORS_HEX[t] || '#8a92a6'}"></div>
+      ${t}
+    </div>
+  `).join('');
+}
+
+function toggleFilter(type) {
+  if (STATE.activeFilters.has(type)) {
+    STATE.activeFilters.delete(type);
+  } else {
+    const allTypes = [...new Set(STATE.graph.nodes.map(n => n.type))];
+    if (STATE.activeFilters.size === 0) {
+      // Activate all except this one
+      allTypes.forEach(t => { if (t !== type) STATE.activeFilters.add(t); });
+    } else {
+      STATE.activeFilters.add(type);
+      if (STATE.activeFilters.size === allTypes.length) STATE.activeFilters.clear();
+    }
+  }
+  renderFilterChips();
+  renderGraph();
+}
+
+function updateLegend() {
+  const types = [...new Set(STATE.graph.nodes.map(n => n.type))].sort();
+  const el = document.getElementById('legendItems');
+  el.innerHTML = types.map(t => `
+    <div class="legend-item">
+      <div class="legend-dot" style="background:${NODE_COLORS_HEX[t] || '#8a92a6'}"></div>
+      <div class="legend-label">${t}</div>
+    </div>
+  `).join('');
+}
+
+// ── D3 GRAPH ─────────────────────────────────────
+function initGraph() {
+  const container = document.getElementById('graphContainer');
+  const svg = d3.select('#graphSvg');
+  STATE.svg = svg;
+
+  const zoom = d3.zoom()
+    .scaleExtent([0.1, 5])
+    .on('zoom', (e) => { STATE.g.attr('transform', e.transform); });
+  STATE.zoom = zoom;
+  svg.call(zoom);
+
+  STATE.g = svg.append('g').attr('class', 'graph-root');
+  STATE.g.append('g').attr('class', 'links');
+  STATE.g.append('g').attr('class', 'edge-labels');
+  STATE.g.append('g').attr('class', 'nodes');
+  STATE.g.append('g').attr('class', 'node-labels');
+}
+
+function renderGraph() {
+  const emptyEl = document.getElementById('graphEmpty');
+  if (!STATE.graph.nodes.length) {
+    emptyEl.style.display = 'flex';
+    clearSvg();
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  // Filter
+  const visibleTypes = STATE.activeFilters;
+  const nodes = STATE.graph.nodes.filter(
+    n => visibleTypes.size === 0 || visibleTypes.has(n.type)
+  );
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const edges = STATE.graph.edges.filter(
+    e => nodeIds.has(e.source) && nodeIds.has(e.target)
+  );
+
+  // Work with copies for D3 (avoid mutating STATE)
+  const nodesCopy = nodes.map(n => ({ ...n }));
+  const edgesCopy = edges.map(e => ({ ...e }));
+
+  drawGraph(nodesCopy, edgesCopy);
+}
+
+function clearSvg() {
+  if (!STATE.g) return;
+  STATE.g.select('.links').selectAll('*').remove();
+  STATE.g.select('.edge-labels').selectAll('*').remove();
+  STATE.g.select('.nodes').selectAll('*').remove();
+  STATE.g.select('.node-labels').selectAll('*').remove();
+  if (STATE.simulation) STATE.simulation.stop();
+}
+
+function drawGraph(nodes, edges) {
+  const container  = document.getElementById('graphContainer');
+  const W = container.clientWidth  || 800;
+  const H = container.clientHeight || 600;
+
+  clearSvg();
+
+  // Init positions if missing
+  nodes.forEach(n => {
+    if (!n.x) n.x = W / 2 + (Math.random() - 0.5) * 300;
+    if (!n.y) n.y = H / 2 + (Math.random() - 0.5) * 300;
   });
-  svg.call(zoomBehavior);
 
-  // Defs (arrowhead)
-  svg.append('defs').append('marker')
-    .attr('id', 'arrowhead')
-    .attr('viewBox', '-0 -5 10 10')
-    .attr('refX', 20)
-    .attr('refY', 0)
-    .attr('orient', 'auto')
-    .attr('markerWidth', 8)
-    .attr('markerHeight', 8)
-    .attr('xoverflow', 'visible')
-    .append('path')
-    .attr('d', 'M 0,-4 L 10,0 L 0,4')
-    .attr('fill', '#3A4A64');
+  // Size scale by connections
+  const maxConn = Math.max(...nodes.map(n => n.connections), 1);
+  const rScale  = d => 6 + (d.connections / maxConn) * 18;
 
-  gEl = svg.append('g');
-  svgEl = svg;
-
-  // Build nodes/edges for D3 (deep copy to avoid mutation issues)
-  const nodes = state.nodes.map(n => ({ ...n }));
-  const nodeById = Object.fromEntries(nodes.map(n => [n.id, n]));
-
-  const links = state.edges
-    .filter(e => nodeById[e.source] && nodeById[e.target])
-    .map(e => ({ ...e, source: e.source, target: e.target }));
-
-  // Simulation
-  simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(120))
-    .force('charge', d3.forceManyBody().strength(-300))
+  // Force simulation
+  if (STATE.simulation) STATE.simulation.stop();
+  STATE.simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id(d => d.id).distance(90).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-220))
     .force('center', d3.forceCenter(W / 2, H / 2))
-    .force('collision', d3.forceCollide(40));
+    .force('collision', d3.forceCollide().radius(d => rScale(d) + 10));
 
   // Links
-  const link = gEl.append('g').selectAll('.graph-link')
-    .data(links).enter().append('line')
-    .attr('class', 'graph-link');
+  const link = STATE.g.select('.links')
+    .selectAll('line')
+    .data(edges)
+    .enter().append('line');
 
-  // Link labels
-  const linkLabel = gEl.append('g').selectAll('.link-label')
-    .data(links).enter().append('text')
-    .attr('class', 'link-label')
-    .text(d => d.relation);
+  // Edge labels
+  const edgeLabel = STATE.g.select('.edge-labels')
+    .selectAll('text')
+    .data(edges)
+    .enter().append('text')
+    .attr('text-anchor', 'middle')
+    .text(d => d.label && d.label.length < 18 ? d.label : '');
 
   // Nodes
-  const node = gEl.append('g').selectAll('.graph-node')
-    .data(nodes).enter().append('g')
-    .attr('class', 'graph-node')
-    .call(
-      d3.drag()
-        .on('start', (event, d) => {
-          if (!event.active) simulation.alphaTarget(0.3).restart();
-          d.fx = d.x; d.fy = d.y;
-        })
-        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
-        .on('end', (event, d) => {
-          if (!event.active) simulation.alphaTarget(0);
-          d.fx = null; d.fy = null;
-        })
+  const node = STATE.g.select('.nodes')
+    .selectAll('circle')
+    .data(nodes)
+    .enter().append('circle')
+    .attr('r', rScale)
+    .attr('fill', d => NODE_COLORS_HEX[d.type] || '#8a92a6')
+    .attr('fill-opacity', 0.85)
+    .attr('stroke', d => NODE_COLORS_HEX[d.type] || '#8a92a6')
+    .call(d3.drag()
+      .on('start', dragStart)
+      .on('drag', dragging)
+      .on('end', dragEnd)
     )
-    .on('click', (event, d) => {
-      event.stopPropagation();
-      const nodeData = state.nodes.find(n => n.id === d.id);
-      if (nodeData) showNodePanel(nodeData);
-    });
+    .on('mouseover', showTooltip)
+    .on('mousemove', moveTooltip)
+    .on('mouseout', hideTooltip)
+    .on('click', nodeClick);
 
-  node.append('circle')
-    .attr('r', d => {
-      const degree = links.filter(l =>
-        (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id
-      ).length;
-      return Math.max(16, Math.min(32, 14 + degree * 2));
-    })
-    .attr('fill', d => TYPE_COLORS[d.type] || TYPE_COLORS.Other)
-    .attr('stroke', d => d3.color(TYPE_COLORS[d.type] || TYPE_COLORS.Other).brighter(0.5))
-    .attr('fill-opacity', 0.85);
-
-  node.append('text')
-    .text(d => d.label.length > 12 ? d.label.slice(0, 12) + '…' : d.label)
-    .attr('dy', d => {
-      const degree = links.filter(l =>
-        (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id
-      ).length;
-      return Math.max(16, Math.min(32, 14 + degree * 2)) + 14;
-    })
-    .style('font-size', '10px')
-    .attr('fill', '#8A9BB8');
-
-  // Close panels when clicking background
-  svg.on('click', () => { closeNodePanel(); });
+  // Node labels
+  const label = STATE.g.select('.node-labels')
+    .selectAll('text')
+    .data(nodes)
+    .enter().append('text')
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => rScale(d) + 13)
+    .text(d => d.label.length > 18 ? d.label.slice(0, 16) + '…' : d.label);
 
   // Tick
-  simulation.on('tick', () => {
+  STATE.simulation.on('tick', () => {
     link
       .attr('x1', d => d.source.x)
       .attr('y1', d => d.source.y)
       .attr('x2', d => d.target.x)
       .attr('y2', d => d.target.y);
 
-    linkLabel
+    edgeLabel
       .attr('x', d => (d.source.x + d.target.x) / 2)
       .attr('y', d => (d.source.y + d.target.y) / 2);
 
-    node.attr('transform', d => `translate(${d.x},${d.y})`);
+    node
+      .attr('cx', d => d.x)
+      .attr('cy', d => d.y);
+
+    label
+      .attr('x', d => d.x)
+      .attr('y', d => d.y);
+  });
+
+  // Zoom to fit after settle
+  setTimeout(() => zoomToFit(), 1200);
+}
+
+// ── DRAG ─────────────────────────────────────────
+function dragStart(event, d) {
+  if (!event.active) STATE.simulation.alphaTarget(0.3).restart();
+  d.fx = d.x; d.fy = d.y;
+}
+function dragging(event, d) { d.fx = event.x; d.fy = event.y; }
+function dragEnd(event, d) {
+  if (!event.active) STATE.simulation.alphaTarget(0);
+  d.fx = null; d.fy = null;
+}
+
+// ── TOOLTIP ──────────────────────────────────────
+function showTooltip(event, d) {
+  const tt = document.getElementById('nodeTooltip');
+  const sources = STATE.articles
+    .filter(a => d.articles.includes(a.id))
+    .map(a => a.title).join(', ');
+
+  tt.innerHTML = `
+    <div class="tooltip-name">${esc(d.label)}</div>
+    <div class="tooltip-type" style="color:${NODE_COLORS_HEX[d.type] || '#8a92a6'}">${d.type}</div>
+    <div class="tooltip-connections">${d.connections} connection${d.connections !== 1 ? 's' : ''}</div>
+    ${sources ? `<div class="tooltip-sources">From: ${esc(sources)}</div>` : ''}
+  `;
+  tt.classList.remove('hidden');
+  moveTooltip(event);
+}
+function moveTooltip(event) {
+  const tt = document.getElementById('nodeTooltip');
+  const container = document.getElementById('graphContainer');
+  const rect = container.getBoundingClientRect();
+  let x = event.clientX - rect.left + 14;
+  let y = event.clientY - rect.top  - 14;
+  if (x + 230 > rect.width) x -= 240;
+  if (y + 120 > rect.height) y -= 120;
+  tt.style.left = x + 'px';
+  tt.style.top  = y + 'px';
+}
+function hideTooltip() {
+  document.getElementById('nodeTooltip').classList.add('hidden');
+}
+
+// ── NODE CLICK: highlight connected ──────────────
+function nodeClick(event, d) {
+  const connectedIds = new Set([d.id]);
+  STATE.g.select('.links').selectAll('line').each(function(e) {
+    const srcId = typeof e.source === 'object' ? e.source.id : e.source;
+    const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
+    if (srcId === d.id) connectedIds.add(tgtId);
+    if (tgtId === d.id) connectedIds.add(srcId);
+  });
+
+  STATE.g.select('.nodes').selectAll('circle')
+    .attr('fill-opacity', n => connectedIds.has(n.id) ? 1 : 0.2);
+  STATE.g.select('.node-labels').selectAll('text')
+    .attr('opacity', n => connectedIds.has(n.id) ? 1 : 0.2);
+  STATE.g.select('.links').selectAll('line')
+    .classed('highlighted', e => {
+      const s = typeof e.source === 'object' ? e.source.id : e.source;
+      const t = typeof e.target === 'object' ? e.target.id : e.target;
+      return s === d.id || t === d.id;
+    })
+    .attr('stroke-opacity', e => {
+      const s = typeof e.source === 'object' ? e.source.id : e.source;
+      const t = typeof e.target === 'object' ? e.target.id : e.target;
+      return (s === d.id || t === d.id) ? 1 : 0.15;
+    });
+
+  // Click background to reset
+  STATE.svg.on('click.reset', function(ev) {
+    if (ev.target.tagName === 'svg' || ev.target.tagName === 'g') {
+      STATE.g.select('.nodes').selectAll('circle').attr('fill-opacity', 0.85);
+      STATE.g.select('.node-labels').selectAll('text').attr('opacity', 1);
+      STATE.g.select('.links').selectAll('line')
+        .classed('highlighted', false)
+        .attr('stroke-opacity', 0.7);
+      STATE.svg.on('click.reset', null);
+    }
   });
 }
 
-// ─── Zoom Controls ────────────────────────────────────────────────────────────
-function zoomIn()  { svgEl?.transition().call(zoomBehavior.scaleBy, 1.4); }
-function zoomOut() { svgEl?.transition().call(zoomBehavior.scaleBy, 0.7); }
+// ── ZOOM CONTROLS ────────────────────────────────
+function zoomToFit() {
+  const svg  = STATE.svg;
+  const g    = STATE.g;
+  if (!svg || !g) return;
+  try {
+    const bounds = g.node().getBBox();
+    if (!bounds.width || !bounds.height) return;
+    const container = document.getElementById('graphContainer');
+    const W = container.clientWidth;
+    const H = container.clientHeight;
+    const pad = 60;
+    const scale = Math.min(
+      (W - pad * 2) / bounds.width,
+      (H - pad * 2) / bounds.height,
+      2
+    );
+    const tx = W / 2 - (bounds.x + bounds.width  / 2) * scale;
+    const ty = H / 2 - (bounds.y + bounds.height / 2) * scale;
+    svg.transition().duration(600)
+       .call(STATE.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+  } catch(e) {}
+}
+
 function resetZoom() {
-  if (!svgEl) return;
-  svgEl.transition().duration(400).call(
-    zoomBehavior.transform,
-    d3.zoomIdentity
+  STATE.svg.transition().duration(400)
+    .call(STATE.zoom.transform, d3.zoomIdentity);
+}
+
+// ── QUERY GRAPH ──────────────────────────────────
+async function queryGraph() {
+  const qInput  = document.getElementById('queryInput');
+  const btn     = document.getElementById('queryBtn');
+  const btnText = document.getElementById('queryBtnText');
+  const spinner = document.getElementById('querySpinner');
+  const resultsEl = document.getElementById('queryResults');
+
+  const q = sanitizeInput(qInput.value.trim());
+  if (!q) { showNotif('Enter a question', 'error'); return; }
+  if (q.length > 500) { showNotif('Query too long (max 500 characters)', 'error'); return; }
+  if (!STATE.apiKey) { showNotif('Save your API key first', 'error'); return; }
+  if (!STATE.graph.nodes.length) { showNotif('Add articles to build the graph first', 'error'); return; }
+
+  btn.disabled = true;
+  btnText.textContent = 'Thinking…';
+  spinner.classList.remove('hidden');
+
+  try {
+    const graphSummary = buildGraphSummary();
+    const system = `You are an intelligent assistant that answers questions about a knowledge graph.
+The knowledge graph was extracted from articles. Answer concisely and specifically.
+Base your answers only on the provided graph data.`;
+
+    const content = `Knowledge Graph Data:\n${graphSummary}\n\nQuestion: ${q}`;
+    const answer = await callClaude([{ role: 'user', content }], system);
+
+    const item = document.createElement('div');
+    item.className = 'query-result-item';
+    item.innerHTML = `<div class="query-result-q">Q: ${esc(q)}</div><div>${formatAnswer(answer)}</div>`;
+    if (resultsEl.querySelector('.empty-state')) resultsEl.innerHTML = '';
+    resultsEl.insertBefore(item, resultsEl.firstChild);
+    qInput.value = '';
+  } catch(e) {
+    showNotif('Query failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = 'Ask';
+    spinner.classList.add('hidden');
+  }
+}
+
+function setQuery(q) {
+  document.getElementById('queryInput').value = q;
+  document.getElementById('queryInput').focus();
+}
+
+function buildGraphSummary() {
+  const nodeLines = STATE.graph.nodes.map(n =>
+    `- [${n.type}] ${n.label} (connections: ${n.connections}, in articles: ${
+      STATE.articles.filter(a => n.articles.includes(a.id)).map(a => a.title).join(', ')
+    })`
   );
+  const edgeLines = STATE.graph.edges.map(e => {
+    const s = STATE.graph.nodes.find(n => n.id === e.source);
+    const t = STATE.graph.nodes.find(n => n.id === e.target);
+    if (!s || !t) return null;
+    return `- ${s.label} --[${e.label}]--> ${t.label}`;
+  }).filter(Boolean);
+
+  return `NODES (${STATE.graph.nodes.length}):\n${nodeLines.join('\n')}\n\nEDGES (${STATE.graph.edges.length}):\n${edgeLines.join('\n')}`;
 }
 
-// ─── Toast ───────────────────────────────────────────────────────────────────
-let toastTimer;
-function showToast(msg, type = '') {
-  const el = document.getElementById('toast');
+function formatAnswer(text) {
+  // Simple markdown-like formatting
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>')
+    .replace(/$/, '</p>');
+}
+
+// ── EXPORT ───────────────────────────────────────
+function exportJSON() {
+  const data = {
+    metadata: {
+      articles: STATE.articles.length,
+      nodes: STATE.graph.nodes.length,
+      edges: STATE.graph.edges.length,
+      exported: new Date().toISOString(),
+    },
+    articles: STATE.articles.map(a => ({ id: a.id, title: a.title })),
+    nodes: STATE.graph.nodes.map(({ id, label, type, articles, connections }) =>
+      ({ id, label, type, articles, connections })),
+    edges: STATE.graph.edges.map(({ id, source, target, label, article }) =>
+      ({ id, source, target, label, article })),
+  };
+  download('knowledge-graph.json', JSON.stringify(data, null, 2), 'application/json');
+}
+
+function exportCSV() {
+  const nodeRows = ['id,label,type,connections,articles'];
+  STATE.graph.nodes.forEach(n => {
+    const arts = STATE.articles.filter(a => n.articles.includes(a.id)).map(a => a.title).join('; ');
+    nodeRows.push(`"${n.id}","${n.label}","${n.type}",${n.connections},"${arts}"`);
+  });
+  const edgeRows = ['\nid,source,target,label'];
+  STATE.graph.edges.forEach(e => {
+    const s = STATE.graph.nodes.find(n => n.id === e.source);
+    const t = STATE.graph.nodes.find(n => n.id === e.target);
+    edgeRows.push(`"${e.id}","${s?.label || e.source}","${t?.label || e.target}","${e.label}"`);
+  });
+  download('knowledge-graph.csv', [...nodeRows, ...edgeRows].join('\n'), 'text/csv');
+}
+
+function download(filename, content, type) {
+  const blob = new Blob([content], { type });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: filename });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── NOTIFICATION ─────────────────────────────────
+function showNotif(msg, type = 'info') {
+  const el = document.getElementById('notification');
   el.textContent = msg;
-  el.className = 'show ' + type;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 3200);
+  el.className = `notification ${type}`;
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.add('hidden'), 3500);
 }
 
-// ─── Enter key ───────────────────────────────────────────────────────────────
-document.getElementById('query-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') queryGraph();
-});
-
-// ─── Init ────────────────────────────────────────────────────────────────────
-updateStats();
-renderGraph();
-
-window.addEventListener('resize', () => {
-  if (state.nodes.length > 0) renderGraph();
-});
+// ── UTILS ────────────────────────────────────────
+function esc(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
