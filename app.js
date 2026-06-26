@@ -48,8 +48,14 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── STORAGE ─────────────────────────────────────
 function loadFromStorage() {
   try {
-    const k = localStorage.getItem('kg_apikey');
+    // Load key for default provider (groq)
+    const defaultProvider = document.getElementById('providerSelect')?.value || 'groq';
+    const k = localStorage.getItem('kg_apikey_' + defaultProvider)
+           || localStorage.getItem('kg_apikey'); // backward compat
     if (k) { STATE.apiKey = k; document.getElementById('apiKeyInput').value = k; showKeyStatus(true); }
+    // Update placeholder
+    const p = getProvider();
+    if (p) document.getElementById('apiKeyInput').placeholder = p.placeholder;
     const d = localStorage.getItem('kg_data');
     if (d) {
       const parsed = JSON.parse(d);
@@ -65,41 +71,119 @@ function saveToStorage() {
   } catch(e) { console.warn('Storage save failed', e); }
 }
 
+// ── PROVIDER CONFIG ─────────────────────────────
+const PROVIDERS = {
+  groq: {
+    name: 'Groq',
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    model: 'llama-3.3-70b-versatile',
+    keyPrefix: 'gsk_',
+    placeholder: 'gsk_...',
+  },
+  anthropic: {
+    name: 'Anthropic',
+    url: 'https://api.anthropic.com/v1/messages',
+    model: 'claude-sonnet-4-6',
+    keyPrefix: 'sk-ant-',
+    placeholder: 'sk-ant-...',
+  },
+  openai: {
+    name: 'OpenAI',
+    url: 'https://api.openai.com/v1/chat/completions',
+    model: 'gpt-4o-mini',
+    keyPrefix: 'sk-',
+    placeholder: 'sk-...',
+  },
+};
+
+function getProvider() {
+  const sel = document.getElementById('providerSelect');
+  return PROVIDERS[sel ? sel.value : 'groq'];
+}
+
+function onProviderChange() {
+  const p = getProvider();
+  document.getElementById('apiKeyInput').placeholder = p.placeholder;
+  document.getElementById('keyStatus').textContent = '';
+  // Load saved key for this provider if any
+  const saved = localStorage.getItem('kg_apikey_' + document.getElementById('providerSelect').value);
+  document.getElementById('apiKeyInput').value = saved || '';
+  if (saved) { STATE.apiKey = saved; showKeyStatus(true); }
+  else { STATE.apiKey = ''; showKeyStatus(false); }
+}
+
 function saveApiKey() {
   const val = document.getElementById('apiKeyInput').value.trim();
-  if (!val.startsWith('sk-ant-')) { showNotif('Key must start with sk-ant-', 'error'); return; }
+  const providerKey = document.getElementById('providerSelect').value;
+  const p = getProvider();
+  if (!val) { showNotif('Enter an API key', 'error'); return; }
+  if (!val.startsWith(p.keyPrefix)) {
+    showNotif(`${p.name} key must start with ${p.keyPrefix}`, 'error'); return;
+  }
   STATE.apiKey = val;
-  localStorage.setItem('kg_apikey', val);
+  localStorage.setItem('kg_apikey_' + providerKey, val);
   showKeyStatus(true);
-  showNotif('API key saved', 'success');
+  showNotif(`${p.name} API key saved`, 'success');
 }
 
 function showKeyStatus(ok) {
   const el = document.getElementById('keyStatus');
-  el.textContent = ok ? '✓ Key saved' : '';
-  el.style.color = ok ? 'var(--green)' : 'var(--red)';
+  if (ok) {
+    const p = getProvider();
+    el.textContent = '✓ ' + p.name + ' key saved';
+    el.style.color = 'var(--green)';
+  } else {
+    el.textContent = '';
+  }
 }
 
-// ── API CALL ────────────────────────────────────
+// ── API CALL (multi-provider) ────────────────────
 async function callClaude(messages, systemPrompt = '') {
-  if (!STATE.apiKey) throw new Error('No API key. Add your Anthropic key first.');
-  const body = {
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1000,
-    system: systemPrompt,
-    messages,
-  };
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': STATE.apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `HTTP ${res.status}`);
+  if (!STATE.apiKey) throw new Error('No API key. Add your key and save it first.');
+  const providerKey = document.getElementById('providerSelect')?.value || 'groq';
+  const p = PROVIDERS[providerKey];
+
+  // Anthropic uses its own format; Groq + OpenAI use OpenAI-compatible format
+  if (providerKey === 'anthropic') {
+    const body = { model: p.model, max_tokens: 1000, system: systemPrompt, messages };
+    const res = await fetch(p.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': STATE.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.content[0].text;
+
+  } else {
+    // OpenAI-compatible (Groq + OpenAI)
+    const oaiMessages = [];
+    if (systemPrompt) oaiMessages.push({ role: 'system', content: systemPrompt });
+    oaiMessages.push(...messages);
+    const body = { model: p.model, max_tokens: 1000, messages: oaiMessages };
+    const res = await fetch(p.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + STATE.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.choices[0].message.content;
   }
-  const data = await res.json();
-  return data.content[0].text;
 }
 
 // ── EXTRACT GRAPH FROM ARTICLE ──────────────────

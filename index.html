@@ -26,9 +26,15 @@
     <!-- LEFT PANEL: Input + Articles -->
     <aside class="panel-left" id="leftPanel">
       <div class="panel-section">
-        <div class="section-label">API KEY</div>
+        <div class="section-label">PROVIDER</div>
+        <select id="providerSelect" onchange="onProviderChange()">
+          <option value="groq">Groq (Free tier)</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="openai">OpenAI</option>
+        </select>
+        <div class="section-label" style="margin-top:8px">API KEY</div>
         <div class="input-row">
-          <input type="password" id="apiKeyInput" placeholder="sk-ant-..." />
+          <input type="password" id="apiKeyInput" placeholder="gsk_..." />
           <button class="btn-save" id="saveKeyBtn" onclick="saveApiKey()">Save</button>
         </div>
         <div class="key-status" id="keyStatus"></div>
